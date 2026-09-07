@@ -1,0 +1,195 @@
+now implement phase 1 of the iris architecture.
+
+IMPORTANT: iris's product vision/specification remains the source of truth.
+do not redesign the product or add unrelated features.
+
+we are specifically hardening the existing application for portability before adding major new functionality.
+
+CURRENT STATE:
+- github main is commit 14ab808 ("sync latest iris build")
+- the app is currently running successfully
+- the existing vertical slice is:
+  brain dump → ai interpretation → human correction → ai planning → editable dashboard
+- github is the durable source of truth
+- replit is only our current development environment
+
+PORTABILITY IS A HARD REQUIREMENT:
+if replit becomes paid, hits a free-tier limit, removes functionality, or becomes inconvenient, we must be able to migrate the entire application to another platform without rebuilding it.
+
+therefore:
+- do NOT use replit-specific runtime APIs
+- do NOT introduce a replit database
+- do NOT make application logic dependent on replit
+- do NOT introduce a proprietary service when a portable implementation will work
+- keep secrets in environment variables
+- keep provider-specific logic behind clear boundaries
+
+PHASE 1 — PORTABILITY + RUNTIME FOUNDATION
+
+1. SERVER PORT
+
+update the backend so it uses:
+
+process.env.PORT
+
+with a sensible local development fallback.
+
+do not hardcode production behavior to port 3001.
+
+2. FRONTEND API URL
+
+remove the browser's dependency on a hardcoded localhost backend URL.
+
+for production, prefer same-origin API calls such as:
+
+/api/interpret
+/api/plan
+
+for local development, configure the Vite development server to proxy /api requests to the local Express server.
+
+use environment configuration only where genuinely necessary.
+
+the frontend should not contain a permanently hardcoded localhost production assumption.
+
+3. SINGLE PRODUCTION RUNTIME
+
+configure Express so that the production server can:
+
+- serve the built Vite frontend
+- serve /api/* routes
+- operate from one application origin
+
+keep the normal Vite development workflow intact.
+
+do not break the currently working development environment.
+
+4. HEALTH ENDPOINT
+
+add:
+
+GET /api/health
+
+which returns a small JSON response confirming that the backend is alive.
+
+do not expose secrets or environment values.
+
+5. ENVIRONMENT DOCUMENTATION
+
+update .env.example so that it accurately documents every environment variable the application actually requires.
+
+at minimum, account for the current AI provider credentials and configuration.
+
+do NOT put actual secrets into .env.example.
+
+6. AI PROVIDER BOUNDARY
+
+the current implementation uses OpenRouter.
+
+DO NOT remove OpenRouter yet.
+
+instead, separate the provider-specific request logic from the application-level interpretation/planning logic.
+
+conceptually we want:
+
+AI PROVIDER
+    ↓
+interpret(messages)
+plan(interpretation)
+
+OpenRouter should be the current implementation behind that boundary.
+
+the rest of the application should not need to know OpenRouter's URL/request format.
+
+make the model and provider configuration environment-based rather than hardcoded wherever practical.
+
+7. ERROR HANDLING
+
+do not expose raw internal/provider errors directly to the frontend.
+
+return predictable API error responses with an appropriate status code and safe user-facing error message.
+
+log useful technical details server-side for debugging.
+
+8. README
+
+replace the generic Vite README with an Iris-specific README that documents:
+
+- what Iris is
+- technology stack
+- repository structure
+- prerequisites
+- installing dependencies
+- environment variables
+- starting development
+- starting frontend/backend if separate processes are needed
+- production build
+- production start
+- API endpoints
+- localStorage persistence
+- current AI provider
+- portability/deployment notes
+
+9. CLEAN UP ONLY SAFE STARTER REMNANTS
+
+you may remove clearly unused Vite starter assets/dependencies IF you can verify they are genuinely unused.
+
+do NOT perform broad refactoring.
+
+do NOT remove anything that may be part of the Iris UI.
+
+10. DO NOT DO THESE THINGS YET
+
+do NOT:
+- add authentication
+- add a database
+- add cloud sync
+- add subscriptions
+- add payments
+- add new AI features
+- redesign the UI
+- rewrite App.jsx
+- change the interpretation categories
+- change the planning behavior
+- replace OpenRouter
+- add a new framework
+- install unnecessary dependencies
+
+those are later phases.
+
+11. PRESERVE CURRENT FUNCTIONALITY
+
+after making the changes, verify that the existing flow still works:
+
+brain dump
+→ /api/interpret
+→ interpretation review
+→ correction/clarification
+→ /api/plan
+→ dashboard
+
+do not declare success merely because the code compiles.
+
+run the relevant checks/build and inspect for errors.
+
+12. GIT SAFETY
+
+do not run git push.
+
+do not reset branches.
+
+do not rewrite git history.
+
+when finished, report:
+
+A. files changed
+B. what changed in each file
+C. dependencies added/removed
+D. environment variables required
+E. how local development now works
+F. how production deployment now works
+G. how the changes improve portability
+H. verification performed
+I. any remaining risks
+
+STOP after this phase.
+do not start phase 2.

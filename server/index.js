@@ -1,8 +1,10 @@
 import dotenv from 'dotenv'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import express from 'express'
 import cors from 'cors'
+import { createAiProvider } from './services/aiProvider.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -12,48 +14,27 @@ dotenv.config({
 })
 
 const app = express()
+const aiProvider = createAiProvider()
 
 app.use(cors())
 app.use(express.json())
 
-const PORT = 3001
+const PORT = Number.parseInt(process.env.PORT || '3001', 10) || 3001
+const DIST_PATH = path.join(__dirname, '../dist')
 
-const MODEL = 'openai/gpt-oss-20b'
+function apiError(publicMessage, statusCode = 500) {
+  const error = new Error(publicMessage)
+  error.publicMessage = publicMessage
+  error.statusCode = statusCode
+  return error
+}
 
-async function callOpenRouter(messages) {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY is missing')
-  }
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      temperature: 0.2,
-    }),
+function sendApiError(res, error, fallbackMessage) {
+  console.error(fallbackMessage, error)
+  const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500
+  res.status(statusCode).json({
+    error: error?.publicMessage || fallbackMessage,
   })
-
-  const data = await response.json()
-
-  if (!response.ok) {
-    console.error('OpenRouter error:', data)
-    throw new Error(
-      data?.error?.message || `OpenRouter request failed with ${response.status}`
-    )
-  }
-
-  const content = data?.choices?.[0]?.message?.content
-
-  if (!content) {
-    throw new Error('AI returned an empty response')
-  }
-
-  return content
 }
 
 function parseAIJson(content) {
@@ -79,7 +60,7 @@ function parseAIJson(content) {
       return JSON.parse(possibleJson)
     }
 
-    throw new Error('AI returned invalid JSON')
+    throw apiError('Iris received an unexpected AI response. Please try again.', 502)
   }
 }
 
@@ -208,23 +189,23 @@ function ensureGenericTestPreparation(plan, interpretation) {
 
 function validatePlan(plan) {
   if (!plan || !Array.isArray(plan.days) || plan.days.length === 0) {
-    throw new Error('AI returned an invalid plan structure')
+    throw apiError('Iris received an unexpected plan. Please try again.', 502)
   }
 
   for (const day of plan.days) {
     if (!day || typeof day.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
-      throw new Error('AI returned a plan day without a valid date')
+      throw apiError('Iris received a plan with an invalid date. Please try again.', 502)
     }
 
     for (const field of ['tasks', 'anchors', 'protected_time']) {
       if (day[field] !== undefined && !Array.isArray(day[field])) {
-        throw new Error(`AI returned an invalid ${field} list`)
+        throw apiError('Iris received an invalid plan. Please try again.', 502)
       }
     }
 
     for (const anchor of day.anchors || []) {
       if (!anchor || typeof anchor.date !== 'string' || !DATE_PATTERN.test(anchor.date)) {
-        throw new Error('AI returned an anchor without a valid date')
+        throw apiError('Iris received an anchor with an invalid date. Please try again.', 502)
       }
     }
   }
@@ -233,6 +214,10 @@ function validatePlan(plan) {
 /* -------------------------------------------------------
    INTERPRETATION
 ------------------------------------------------------- */
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok' })
+})
 
 app.post('/api/interpret', async (req, res) => {
   try {
@@ -304,7 +289,7 @@ Return exactly this structure:
 }
 `
 
-    const content = await callOpenRouter([
+    const content = await aiProvider.interpret([
       {
         role: 'system',
         content: systemPrompt,
@@ -319,11 +304,7 @@ Return exactly this structure:
 
     res.json(interpretation)
   } catch (error) {
-    console.error('Interpretation error:', error)
-
-    res.status(500).json({
-      error: error.message || 'Failed to interpret brain dump',
-    })
+    sendApiError(res, error, 'Interpretation request failed')
   }
 })
 
@@ -466,7 +447,7 @@ ${JSON.stringify(interpretation, null, 2)}
 Build the plan from this information.
 `
 
-    const content = await callOpenRouter([
+    const content = await aiProvider.plan([
       {
         role: 'system',
         content: systemPrompt,
@@ -486,11 +467,7 @@ Build the plan from this information.
 
     res.json(plan)
   } catch (error) {
-    console.error('Planning error:', error)
-
-    res.status(500).json({
-      error: error.message || 'Failed to create plan',
-    })
+    sendApiError(res, error, 'Planning request failed')
   }
 })
 
@@ -498,6 +475,20 @@ Build the plan from this information.
    SERVER
 ------------------------------------------------------- */
 
-app.listen(PORT, () => {
-  console.log(`Iris server running on http://localhost:${PORT}`)
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Iris API route not found.' })
+})
+
+if (fs.existsSync(DIST_PATH)) {
+  app.use(express.static(DIST_PATH))
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) return next()
+    res.sendFile(path.join(DIST_PATH, 'index.html'), (error) => {
+      if (error) next()
+    })
+  })
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Iris server running on port ${PORT}`)
 })

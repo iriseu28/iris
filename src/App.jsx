@@ -3,7 +3,7 @@ import InlineEdit from './components/InlineEdit'
 import { CATEGORY_KEYS, loadIrisState, normalizeInterpretation, normalizePlan, persistIrisState } from './lib/irisState'
 import './App.css'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
+const API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || ''
 const CATEGORIES = {
   tasks: ['✓', 'tasks'], deadlines: ['◷', 'deadlines'], events: ['○', 'events'], reminders: ['🔔', 'reminders'],
   routines: ['↻', 'routines'], notes: ['📝', 'notes'], ideas: ['💡', 'ideas'], non_negotiables: ['♡', 'things i’ll protect'],
