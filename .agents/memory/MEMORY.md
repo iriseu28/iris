@@ -1,0 +1,1 @@
+- [Replit port detection](replit-port-detection.md) — running local listeners can auto-add ports and runtime modules to `.replit`; restore intentional config after verification.

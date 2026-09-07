@@ -5,6 +5,13 @@ import { fileURLToPath } from 'url'
 import express from 'express'
 import cors from 'cors'
 import { createAiProvider } from './services/aiProvider.js'
+import { parseAiJson } from './domain/parseAiJson.js'
+import {
+  validateInterpretRequest,
+  validateInterpretation,
+  validatePlan,
+  validatePlanRequest,
+} from './domain/contracts.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -22,46 +29,12 @@ app.use(express.json())
 const PORT = Number.parseInt(process.env.PORT || '3001', 10) || 3001
 const DIST_PATH = path.join(__dirname, '../dist')
 
-function apiError(publicMessage, statusCode = 500) {
-  const error = new Error(publicMessage)
-  error.publicMessage = publicMessage
-  error.statusCode = statusCode
-  return error
-}
-
 function sendApiError(res, error, fallbackMessage) {
   console.error(fallbackMessage, error)
   const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500
   res.status(statusCode).json({
     error: error?.publicMessage || fallbackMessage,
   })
-}
-
-function parseAIJson(content) {
-  let cleaned = content.trim()
-
-  // Remove markdown fences if the model accidentally adds them.
-  cleaned = cleaned
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-
-  // Try the whole response first.
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    // Sometimes models put a little text before/after the JSON.
-    const firstBrace = cleaned.indexOf('{')
-    const lastBrace = cleaned.lastIndexOf('}')
-
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      const possibleJson = cleaned.slice(firstBrace, lastBrace + 1)
-      return JSON.parse(possibleJson)
-    }
-
-    throw apiError('Iris received an unexpected AI response. Please try again.', 502)
-  }
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -187,30 +160,6 @@ function ensureGenericTestPreparation(plan, interpretation) {
   }
 }
 
-function validatePlan(plan) {
-  if (!plan || !Array.isArray(plan.days) || plan.days.length === 0) {
-    throw apiError('Iris received an unexpected plan. Please try again.', 502)
-  }
-
-  for (const day of plan.days) {
-    if (!day || typeof day.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
-      throw apiError('Iris received a plan with an invalid date. Please try again.', 502)
-    }
-
-    for (const field of ['tasks', 'anchors', 'protected_time']) {
-      if (day[field] !== undefined && !Array.isArray(day[field])) {
-        throw apiError('Iris received an invalid plan. Please try again.', 502)
-      }
-    }
-
-    for (const anchor of day.anchors || []) {
-      if (!anchor || typeof anchor.date !== 'string' || !DATE_PATTERN.test(anchor.date)) {
-        throw apiError('Iris received an anchor with an invalid date. Please try again.', 502)
-      }
-    }
-  }
-}
-
 /* -------------------------------------------------------
    INTERPRETATION
 ------------------------------------------------------- */
@@ -221,13 +170,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/interpret', async (req, res) => {
   try {
-    const { brainDump, currentDate, currentTime } = req.body
-
-    if (!brainDump?.trim()) {
-      return res.status(400).json({
-        error: 'Brain dump is empty',
-      })
-    }
+    const { brainDump, currentDate, currentTime } = validateInterpretRequest(req.body)
 
     const systemPrompt = `
 You are Iris, an executive-function assistant for a student.
@@ -300,7 +243,8 @@ Return exactly this structure:
       },
     ])
 
-    const interpretation = normalizeInterpretationDates(parseAIJson(content), currentDate)
+    const validated = validateInterpretation(parseAiJson(content))
+    const interpretation = normalizeInterpretationDates(validated, currentDate)
 
     res.json(interpretation)
   } catch (error) {
@@ -314,17 +258,7 @@ Return exactly this structure:
 
 app.post('/api/plan', async (req, res) => {
   try {
-    const {
-      interpretation,
-      currentDate,
-      currentTime,
-    } = req.body
-
-    if (!interpretation) {
-      return res.status(400).json({
-        error: 'Interpretation is missing',
-      })
-    }
+    const { interpretation, currentDate, currentTime } = validatePlanRequest(req.body)
 
     const systemPrompt = `
 You are Iris, an executive-function planning assistant for a student.
@@ -458,9 +392,12 @@ Build the plan from this information.
       },
     ])
 
-    const plan = ensureGenericTestPreparation(
-      attachAnchorDates(parseAIJson(content), interpretation, currentDate),
-      interpretation
+    const validated = validatePlan(parseAiJson(content), { allowMissingAnchorDate: true })
+    const plan = validatePlan(
+      ensureGenericTestPreparation(
+        attachAnchorDates(validated, interpretation, currentDate),
+        interpretation
+      ),
     )
 
     validatePlan(plan)

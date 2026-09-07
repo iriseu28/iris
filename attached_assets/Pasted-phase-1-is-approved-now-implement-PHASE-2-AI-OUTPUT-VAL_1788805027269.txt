@@ -1,0 +1,309 @@
+phase 1 is approved.
+
+now implement PHASE 2: AI OUTPUT VALIDATION + DOMAIN CONTRACTS.
+
+IMPORTANT:
+do not redesign the UI.
+do not add new product features.
+do not add authentication.
+do not add a database.
+do not add cloud sync.
+do not replace OpenRouter.
+do not introduce replit-specific functionality.
+do not change the existing Iris product flow.
+
+the goal of this phase is to make AI-generated data trustworthy and predictable before it enters Iris state.
+
+PORTABILITY REQUIREMENT:
+prefer standard JavaScript/Node functionality and small, portable modules.
+do not add a validation dependency unless there is a strong technical reason.
+if validation can be implemented cleanly without another dependency, do that.
+
+CURRENT FLOW:
+
+brain dump
+→ POST /api/interpret
+→ AI/provider
+→ parse model response
+→ normalize interpretation
+→ frontend
+→ human correction
+→ POST /api/plan
+→ AI/provider
+→ validate plan
+→ frontend dashboard
+
+we need explicit validation boundaries between AI output and application state.
+
+==================================================
+1. CREATE AUTHORITATIVE DOMAIN CONTRACTS
+==================================================
+
+create a clear server-side validation/normalization layer for the existing Iris domain.
+
+at minimum define/validate:
+
+INTERPRETATION:
+- tasks
+- deadlines
+- events
+- reminders
+- routines
+- notes
+- ideas
+- non-negotiables
+- questions
+
+INTERPRETATION ITEMS:
+- required/allowed fields
+- text/content
+- dates
+- times
+- any existing metadata already used by the current application
+
+PLAN:
+- days
+- date
+- tasks
+- anchors
+- protected time
+- any other fields currently expected by App.jsx
+
+DO NOT invent a new data model.
+
+derive the contracts from the EXISTING application code and current API behavior.
+
+the existing data model is the source of truth for this phase.
+
+==================================================
+2. VALIDATE INTERPRETATION AI OUTPUT
+==================================================
+
+after the provider returns parsed JSON and BEFORE normalizeInterpretation() allows it into application state:
+
+validate that:
+
+- the root structure is an object
+- expected categories are arrays
+- unknown categories are rejected or safely ignored
+- each item is an object
+- required text fields are strings
+- dates, when present, have valid expected formats
+- times, when present, have valid expected formats
+- arrays contain the expected item shapes
+- null/undefined/malformed values cannot enter the application state
+- absurdly large strings/arrays cannot create an uncontrolled response
+
+do not silently accept arbitrary objects.
+
+if validation fails, return a safe API error.
+
+do not expose raw model output or internal validation details to the browser.
+
+==================================================
+3. VALIDATE PLAN AI OUTPUT
+==================================================
+
+strengthen the existing plan validation.
+
+validate:
+
+- root structure
+- days array
+- valid YYYY-MM-DD dates
+- task objects
+- task text
+- task dates
+- anchors
+- protected time
+- expected array/object types
+- reasonable string lengths
+- duplicate or malformed structures where practical
+
+do not over-constrain legitimate user input.
+
+do not reject unusual but valid task wording simply because it sounds strange.
+
+==================================================
+4. REQUEST VALIDATION
+==================================================
+
+also validate incoming API request bodies.
+
+for /api/interpret:
+
+- brain dump must exist
+- must be a string
+- must not be empty after trimming
+- impose a sensible maximum length
+
+for /api/plan:
+
+validate that the interpretation payload has the structure Iris expects before sending it to the AI provider.
+
+return predictable errors such as:
+
+400 = invalid user request
+502 = invalid/malformed AI response
+503 = provider unavailable/configuration problem
+
+never expose raw provider exceptions.
+
+==================================================
+5. NORMALIZATION MUST HAPPEN AFTER VALIDATION
+==================================================
+
+make the ordering explicit:
+
+request validation
+→ provider
+→ JSON parsing
+→ schema/domain validation
+→ normalization
+→ application response
+
+do not normalize arbitrary malformed AI data first and then treat it as valid.
+
+stable IDs should continue to be generated client-side as they currently are.
+
+do not change that behavior unless required for correctness.
+
+==================================================
+6. AI PROVIDER BOUNDARY
+==================================================
+
+keep the provider abstraction introduced in phase 1.
+
+the provider should remain responsible for:
+
+- communicating with OpenRouter
+- parsing the provider response
+- provider-specific errors
+
+application/domain services should be responsible for:
+
+- validating the returned domain structure
+- normalizing it
+- enforcing Iris's data contracts
+
+do not put all of this back into one monolithic server file.
+
+==================================================
+7. TESTS
+==================================================
+
+there are currently no automated regression tests.
+
+add focused tests for the validation layer.
+
+at minimum cover:
+
+INTERPRETATION:
+- valid response
+- missing category
+- category is not an array
+- item is not an object
+- missing required text
+- invalid date
+- invalid time
+- unknown category
+- excessively large input
+- malformed AI response
+
+PLAN:
+- valid plan
+- missing days
+- invalid day date
+- malformed task
+- malformed anchor
+- malformed protected time
+- invalid nested data
+
+REQUESTS:
+- empty brain dump
+- non-string brain dump
+- oversized brain dump
+- malformed plan request
+
+also test that malformed AI output produces a safe failure rather than reaching the frontend.
+
+use the project's existing test/runtime conventions where possible.
+
+do not introduce a large testing framework just for this phase unless one already exists.
+
+==================================================
+8. PRESERVE EXISTING BEHAVIOR
+==================================================
+
+the current working product flow must remain:
+
+brain dump
+→ interpretation
+→ human correction
+→ clarification if needed
+→ planning
+→ dashboard
+
+do not change the interpretation categories.
+
+do not change the planning UX.
+
+do not redesign App.jsx.
+
+do not change the visual design.
+
+==================================================
+9. IMPORTANT PRODUCT PRINCIPLE
+==================================================
+
+validation is NOT permission for the AI to become rigid.
+
+Iris deals with messy human language.
+
+validation should protect the application's STRUCTURE, not force users into rigid task-management conventions.
+
+for example, a strange task description can still be valid.
+
+we are validating data shape and safety, not judging the user's life.
+
+==================================================
+10. VERIFICATION
+==================================================
+
+after implementation:
+
+- run the relevant tests
+- run npm run build
+- run targeted lint on changed Iris files
+- run git diff --check
+- verify /api/health still works
+- verify the development app still loads
+- verify the normal API flow still works structurally
+
+if an actual OpenRouter request cannot be tested because credentials are unavailable, say so explicitly and test the provider-independent validation path instead.
+
+==================================================
+11. GIT SAFETY
+==================================================
+
+DO NOT:
+
+- git push
+- reset
+- rewrite history
+- change branches
+
+when finished, report:
+
+A. files changed
+B. exact validation contracts added
+C. request validation added
+D. tests added
+E. dependencies added/removed
+F. API error behavior
+G. verification performed
+H. remaining risks
+
+STOP after phase 2.
+
+do not start phase 3.
