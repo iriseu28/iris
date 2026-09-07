@@ -1,0 +1,62 @@
+before making any changes, i want you to audit the current iris codebase.
+
+do not modify, delete, refactor, install, or generate anything yet.
+
+iris is an ai-powered executive-function os / second brain for students. it is NOT intended to become a conventional todo-list app.
+
+the current github main commit is 14ab808 ("sync latest iris build"), and the working app is currently running successfully.
+
+i need a complete but concise technical audit of the CURRENT repository.
+
+please inspect:
+
+1. the complete project/file structure
+2. the current frontend architecture
+3. every existing component and what it does
+4. current state management
+5. current task/brain-dump logic
+6. current styling/design system
+7. all dependencies in package.json and what each is being used for
+8. whether a backend currently exists
+9. whether any api routes currently exist
+10. whether any database/storage currently exists
+11. whether any authentication currently exists
+12. whether any ai integration currently exists
+13. all environment variables currently expected
+14. whether anything is specifically dependent on replit
+15. anything that would make migrating to another platform difficult
+16. what functionality is currently real vs placeholder/demo functionality
+
+also identify anything that looks incomplete, fragile, duplicated, or likely to cause problems later.
+
+DO NOT change the code.
+
+DO NOT install packages.
+
+DO NOT create files.
+
+DO NOT "improve" anything yet.
+
+at the end, give me:
+
+A. CURRENT ARCHITECTURE
+B. WHAT ALREADY WORKS
+C. WHAT IS PLACEHOLDER
+D. REPLIT/VENDOR LOCK-IN RISKS
+E. RECOMMENDED ARCHITECTURE FOR PORTABILITY
+F. THE NEXT 3 DEVELOPMENT STEPS YOU RECOMMEND
+
+remember these product principles:
+
+- iris should reduce executive-function friction, not create more administrative work
+- iris should be calm, forgiving, intelligent and proactive
+- the user should be able to brain-dump without organizing first
+- ai should understand context rather than merely split text into categories
+- iris should eventually account for urgency, deadlines, effort, energy, context, dependencies and changing circumstances
+- the system should be flexible when the user's plans change
+- the interface should feel gentle and low-friction
+- github must remain the durable source of truth
+- every major technical decision should preserve the ability to migrate away from the current development/deployment platform
+- never build a core feature in a way that makes iris dependent on a single paid vendor
+
+again: AUDIT ONLY. DO NOT MODIFY ANYTHING.
