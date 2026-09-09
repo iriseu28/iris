@@ -192,6 +192,9 @@ export function validateInterpretRequest(body) {
     brainDump: body.brainDump.trim(),
     currentDate: body.currentDate,
     currentTime: body.currentTime,
+    reviewedInterpretation: body.reviewedInterpretation === undefined
+      ? undefined
+      : validateInterpretation(body.reviewedInterpretation, { statusCode: 400 }),
   }
 }
 

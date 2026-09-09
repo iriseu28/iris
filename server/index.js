@@ -170,7 +170,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/interpret', async (req, res) => {
   try {
-    const { brainDump, currentDate, currentTime } = validateInterpretRequest(req.body)
+    const { brainDump, currentDate, currentTime, reviewedInterpretation } = validateInterpretRequest(req.body)
 
     const systemPrompt = `
 You are Iris, an executive-function assistant for a student.
@@ -213,6 +213,9 @@ IMPORTANT RULES:
 17. Do not add motivational fluff.
 18. Every top-level category must be present, even if empty.
 19. Return ONLY valid JSON. No markdown. No explanation outside the JSON.
+20. If a previously reviewed interpretation is supplied, preserve every reviewed item,
+    including its category, text, date, time, and id. Do not silently drop or reclassify
+    reviewed items. Apply clarification answers only where they add information.
 
 Current date: ${currentDate || 'unknown'}
 Current time: ${currentTime || 'unknown'}
@@ -239,7 +242,12 @@ Return exactly this structure:
       },
       {
         role: 'user',
-        content: brainDump.trim(),
+        content: [
+          brainDump.trim(),
+          reviewedInterpretation
+            ? `Previously reviewed interpretation (preserve these items):\n${JSON.stringify(reviewedInterpretation, null, 2)}`
+            : '',
+        ].filter(Boolean).join('\n\n'),
       },
     ])
 

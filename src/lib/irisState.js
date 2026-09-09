@@ -11,9 +11,15 @@ export const CATEGORY_KEYS = [
   'non_negotiables',
 ]
 
+export const INTERPRETATION_KEYS = [...CATEGORY_KEYS, 'questions']
+
 export function createId(prefix = 'iris') {
   if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function isEntity(value) {
+  return typeof value === 'string' || (value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function normalizeEntity(item, prefix) {
@@ -30,11 +36,73 @@ function normalizeEntity(item, prefix) {
 export function normalizeInterpretation(candidate) {
   if (!candidate || typeof candidate !== 'object') return null
   return Object.fromEntries(
-    Object.entries(candidate).map(([category, items]) => [
+    INTERPRETATION_KEYS.map((category) => [
       category,
-      Array.isArray(items) ? items.map((item) => normalizeEntity(item, category.slice(0, -1) || 'item')) : items,
+      Array.isArray(candidate[category])
+        ? candidate[category]
+          .filter(isEntity)
+          .map((item) => normalizeEntity(item, category.slice(0, -1) || 'item'))
+        : [],
     ])
   )
+}
+
+export function updateInterpretationItem(interpretation, category, itemId, patch) {
+  if (!interpretation || !Array.isArray(interpretation[category])) return interpretation
+  return {
+    ...interpretation,
+    [category]: interpretation[category].map((item) => item.id === itemId ? { ...item, ...patch } : item),
+  }
+}
+
+export function removeInterpretationItem(interpretation, category, itemId) {
+  if (!interpretation || !Array.isArray(interpretation[category])) return interpretation
+  return {
+    ...interpretation,
+    [category]: interpretation[category].filter((item) => item.id !== itemId),
+  }
+}
+
+export function moveInterpretationItem(interpretation, fromCategory, toCategory, itemId) {
+  if (!interpretation || fromCategory === toCategory) return interpretation
+  const item = interpretation[fromCategory]?.find((entry) => entry.id === itemId)
+  if (!item || !Array.isArray(interpretation[toCategory])) return interpretation
+  return {
+    ...interpretation,
+    [fromCategory]: interpretation[fromCategory].filter((entry) => entry.id !== itemId),
+    [toCategory]: [...interpretation[toCategory], item],
+  }
+}
+
+export function mergeReviewedInterpretation(reviewed, refreshed) {
+  const current = normalizeInterpretation(reviewed)
+  const next = normalizeInterpretation(refreshed)
+  if (!current) return next
+  if (!next) return current
+
+  const reviewedItems = INTERPRETATION_KEYS.flatMap((category) => current[category].map((item) => [item.id, item]))
+  const reviewedById = new Map(reviewedItems)
+
+  return Object.fromEntries(INTERPRETATION_KEYS.map((category) => {
+    if (category === 'questions') return [category, next.questions]
+    const refreshedItems = next[category].filter((item) => !reviewedById.has(item.id))
+    return [category, [...current[category], ...refreshedItems]]
+  }))
+}
+
+export function buildPlanningRequest(interpretation, { currentDate, currentTime }) {
+  return { interpretation, currentDate, currentTime }
+}
+
+export function isValidDateValue(value) {
+  if (value === '') return true
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+export function isValidTimeValue(value) {
+  return value === '' || (typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value))
 }
 
 export function normalizePlan(candidate) {
