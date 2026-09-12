@@ -12,7 +12,7 @@ import {
   normalizePlan,
   persistIrisState,
   removeInterpretationItem,
-  updateInterpretationItem,
+  updateInterpretationItem as updateInterpretationItemState,
 } from './lib/irisState'
 import './App.css'
 
@@ -114,7 +114,7 @@ function App() {
 
   function updateInterpretationItem(category, itemId, patch) {
     setLastReviewMove(null)
-    setInterpretation((current) => updateInterpretationItem(current, category, itemId, patch))
+    setInterpretation((current) => updateInterpretationItemState(current, category, itemId, patch))
   }
 
   function deleteInterpretationItem(category, itemId) {
