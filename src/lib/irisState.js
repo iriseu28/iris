@@ -13,7 +13,12 @@ export const CATEGORY_KEYS = [
 
 export const INTERPRETATION_KEYS = [...CATEGORY_KEYS, 'questions']
 export const PLANNING_PRIORITIES = ['urgent', 'important', 'normal']
+export const TIMER_BLOCK_TYPES = ['work', 'break', 'transition', 'next-task']
+export const TIMER_STATUSES = ['idle', 'running', 'paused', 'ready', 'stopped', 'completed']
 const MAX_ESTIMATED_MINUTES = 1440
+const MIN_TIMER_MINUTES = 1
+const MAX_TIMER_MINUTES = 180
+const MAX_TIMER_BLOCKS = 24
 
 export function createId(prefix = 'iris') {
   if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`
@@ -155,12 +160,175 @@ export function normalizePlan(candidate) {
   }
 }
 
+function timerError(message) {
+  return new Error(`Invalid timer sequence: ${message}`)
+}
+
+function normalizeTimerBlock(block) {
+  if (!block || typeof block !== 'object' || Array.isArray(block)) throw timerError('malformed block')
+  if (typeof block.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(block.id)) throw timerError('block id is invalid')
+  if (typeof block.label !== 'string' || !block.label.trim() || block.label.length > 200) throw timerError('block label is invalid')
+  if (!TIMER_BLOCK_TYPES.includes(block.type)) throw timerError('block type is invalid')
+  if (!Number.isInteger(block.duration_minutes) || block.duration_minutes < MIN_TIMER_MINUTES || block.duration_minutes > MAX_TIMER_MINUTES) throw timerError('duration is invalid')
+  if (block.source_task_id !== undefined && block.source_task_id !== null && (typeof block.source_task_id !== 'string' || block.source_task_id.length > 200)) throw timerError('source task id is invalid')
+  return {
+    id: block.id,
+    label: block.label.trim(),
+    type: block.type,
+    duration_minutes: block.duration_minutes,
+    source_task_id: block.source_task_id || null,
+    completed: block.completed === true,
+    skipped: block.skipped === true,
+  }
+}
+
+export function createTimerSequence(blocks, now = Date.now()) {
+  if (!Array.isArray(blocks) || blocks.length === 0 || blocks.length > MAX_TIMER_BLOCKS) throw timerError('sequence length is invalid')
+  const normalizedBlocks = blocks.map(normalizeTimerBlock)
+  const ids = new Set()
+  normalizedBlocks.forEach((block) => {
+    if (ids.has(block.id)) throw timerError('block ids must be unique')
+    ids.add(block.id)
+  })
+  return {
+    id: createId('sequence'),
+    blocks: normalizedBlocks,
+    currentIndex: 0,
+    status: 'idle',
+    remaining_seconds: normalizedBlocks[0].duration_minutes * 60,
+    started_at: null,
+    ends_at: null,
+    updated_at: now,
+  }
+}
+
+export function normalizeTimerSequence(candidate, now = Date.now()) {
+  if (!candidate || typeof candidate !== 'object' || !Array.isArray(candidate.blocks)) return null
+  try {
+    const sequence = createTimerSequence(candidate.blocks, now)
+    const currentIndex = Number.isInteger(candidate.currentIndex) ? candidate.currentIndex : 0
+    if (currentIndex < 0 || currentIndex >= sequence.blocks.length) return null
+    if (!TIMER_STATUSES.includes(candidate.status)) return null
+    const remaining = Number.isFinite(candidate.remaining_seconds)
+      ? Math.max(0, Math.min(candidate.blocks[currentIndex].duration_minutes * 60, Math.floor(candidate.remaining_seconds)))
+      : candidate.blocks[currentIndex].duration_minutes * 60
+    return {
+      ...sequence,
+      id: typeof candidate.id === 'string' ? candidate.id : sequence.id,
+      currentIndex,
+      status: candidate.status,
+      remaining_seconds: remaining,
+      started_at: Number.isFinite(candidate.started_at) ? candidate.started_at : null,
+      ends_at: Number.isFinite(candidate.ends_at) ? candidate.ends_at : null,
+      updated_at: now,
+    }
+  } catch {
+    return null
+  }
+}
+
+function withTimerUpdate(sequence, patch, now) {
+  return { ...sequence, ...patch, updated_at: now }
+}
+
+function advanceTimerSequence(sequence, now, completedState) {
+  const blocks = sequence.blocks.map((block, index) => index === sequence.currentIndex ? { ...block, ...completedState } : block)
+  const hasNext = sequence.currentIndex < blocks.length - 1
+  return withTimerUpdate(sequence, {
+    blocks,
+    currentIndex: sequence.currentIndex,
+    status: hasNext ? 'ready' : 'completed',
+    remaining_seconds: 0,
+    started_at: null,
+    ends_at: null,
+  }, now)
+}
+
+export function startTimer(sequence, now = Date.now()) {
+  if (!sequence || !['idle', 'paused', 'ready'].includes(sequence.status)) return sequence
+  const block = sequence.blocks?.[sequence.currentIndex]
+  if (!block || block.completed || block.skipped) return sequence
+  const remaining = Math.max(1, sequence.remaining_seconds || block.duration_minutes * 60)
+  return withTimerUpdate(sequence, {
+    status: 'running',
+    started_at: sequence.started_at || now,
+    ends_at: now + remaining * 1000,
+    remaining_seconds: remaining,
+  }, now)
+}
+
+export function pauseTimer(sequence, now = Date.now()) {
+  if (!sequence || sequence.status !== 'running') return sequence
+  const remaining = Math.max(0, Math.ceil((sequence.ends_at - now) / 1000))
+  return withTimerUpdate(sequence, { status: 'paused', remaining_seconds: remaining, ends_at: null }, now)
+}
+
+export function resumeTimer(sequence, now = Date.now()) {
+  return startTimer(sequence, now)
+}
+
+export function extendTimer(sequence, minutes = 5, now = Date.now()) {
+  if (!sequence || !Number.isInteger(minutes) || minutes < 1 || minutes > 60) return sequence
+  const block = sequence.blocks?.[sequence.currentIndex]
+  if (!block) return sequence
+  const duration = Math.min(MAX_TIMER_MINUTES, block.duration_minutes + minutes)
+  const addedSeconds = (duration - block.duration_minutes) * 60
+  const blocks = sequence.blocks.map((entry, index) => index === sequence.currentIndex ? { ...entry, duration_minutes: duration, completed: false, skipped: false } : entry)
+  const endsAt = sequence.status === 'running' ? (sequence.ends_at || now) + addedSeconds * 1000 : null
+  return withTimerUpdate(sequence, {
+    blocks,
+    status: sequence.status === 'ready' ? 'running' : sequence.status,
+    remaining_seconds: sequence.remaining_seconds + addedSeconds,
+    ends_at: endsAt,
+    started_at: sequence.status === 'ready' ? now : sequence.started_at,
+  }, now)
+}
+
+export function completeTimerBlock(sequence, now = Date.now()) {
+  if (!sequence || !['running', 'paused'].includes(sequence.status)) return sequence
+  return advanceTimerSequence(sequence, now, { completed: true, skipped: false })
+}
+
+export function skipTimerBlock(sequence, now = Date.now()) {
+  if (!sequence || !['idle', 'paused', 'running', 'ready'].includes(sequence.status)) return sequence
+  return advanceTimerSequence(sequence, now, { completed: false, skipped: true })
+}
+
+export function startNextTimerBlock(sequence, now = Date.now()) {
+  if (!sequence || sequence.status !== 'ready' || sequence.currentIndex >= sequence.blocks.length - 1) return sequence
+  return startTimer({
+    ...sequence,
+    currentIndex: sequence.currentIndex + 1,
+    remaining_seconds: sequence.blocks[sequence.currentIndex + 1].duration_minutes * 60,
+  }, now)
+}
+
+export function recoverTimerSequence(sequence, now = Date.now()) {
+  const normalized = normalizeTimerSequence(sequence, now)
+  if (!normalized || normalized.status !== 'running' || !Number.isFinite(normalized.ends_at) || normalized.ends_at > now) return normalized
+  return completeTimerBlock(normalized, now)
+}
+
+export function resetTimerSequence(sequence, now = Date.now()) {
+  if (!sequence) return null
+  return {
+    ...sequence,
+    blocks: sequence.blocks.map((block) => ({ ...block, completed: false, skipped: false })),
+    currentIndex: 0,
+    status: 'idle',
+    remaining_seconds: sequence.blocks[0].duration_minutes * 60,
+    started_at: null,
+    ends_at: null,
+    updated_at: now,
+  }
+}
+
 function isPersistedState(value) {
   return value && typeof value === 'object' && value.version === 1
 }
 
 export function loadIrisState() {
-  const empty = { brainDump: '', interpretation: null, plan: null, completedTaskIds: [] }
+  const empty = { brainDump: '', interpretation: null, plan: null, completedTaskIds: [], timerSequence: null }
   if (typeof window === 'undefined') return empty
 
   try {
@@ -175,6 +343,7 @@ export function loadIrisState() {
       completedTaskIds: Array.isArray(parsed.completedTaskIds)
         ? parsed.completedTaskIds.filter((id) => taskIds.has(id))
         : [],
+      timerSequence: recoverTimerSequence(parsed.timerSequence),
     }
   } catch {
     return empty

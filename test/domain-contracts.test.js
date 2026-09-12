@@ -11,13 +11,23 @@ import {
 } from '../server/domain/contracts.js'
 import {
   buildPlanningRequest,
+  completeTimerBlock,
+  createTimerSequence,
+  extendTimer,
   isValidDateValue,
   isValidTimeValue,
   mergeReviewedInterpretation,
   moveInterpretationItem,
   normalizeInterpretation,
   normalizePlan,
+  normalizeTimerSequence,
+  pauseTimer,
   removeInterpretationItem,
+  recoverTimerSequence,
+  resetTimerSequence,
+  skipTimerBlock,
+  startNextTimerBlock,
+  startTimer,
   updateInterpretationItem,
 } from '../src/lib/irisState.js'
 import { enforceTaskLineage } from '../server/domain/lineage.js'
@@ -321,4 +331,83 @@ test('lineage clears deleted or mismatched sources without reconnecting tasks', 
   assert.equal(result.days[0].tasks[1].source_category, null)
   assert.equal(result.days[0].tasks[2].source_id, null)
   assert.equal(result.days[0].tasks[2].source_category, null)
+})
+
+function timerBlocks() {
+  return [
+    { id: 'work-1', label: 'Write introduction', type: 'work', duration_minutes: 25, source_task_id: 'task-1' },
+    { id: 'break-1', label: 'Take a break', type: 'break', duration_minutes: 5 },
+    { id: 'work-2', label: 'Continue writing', type: 'next-task', duration_minutes: 15, source_task_id: 'task-1' },
+  ]
+}
+
+test('timer sequences validate stable blocks and reject malformed data', () => {
+  const sequence = createTimerSequence(timerBlocks(), 1000)
+  assert.equal(sequence.status, 'idle')
+  assert.equal(sequence.remaining_seconds, 1500)
+  assert.equal(sequence.blocks[0].source_task_id, 'task-1')
+
+  for (const invalid of [
+    { ...timerBlocks()[0], type: 'pomodoro' },
+    { ...timerBlocks()[0], duration_minutes: 0 },
+    { ...timerBlocks()[0], duration_minutes: 181 },
+    { ...timerBlocks()[0], id: 'bad id' },
+  ]) {
+    assert.throws(() => createTimerSequence([invalid]), /Invalid timer sequence/)
+  }
+  assert.throws(() => createTimerSequence([{ ...timerBlocks()[0] }, { ...timerBlocks()[0] }]), /unique/)
+  assert.equal(normalizeTimerSequence({ blocks: 'bad' }), null)
+})
+
+test('timer controls pause, resume, extend, skip, complete, and advance intentionally', () => {
+  const idle = createTimerSequence(timerBlocks(), 1000)
+  const running = startTimer(idle, 1000)
+  assert.equal(running.status, 'running')
+  assert.equal(running.ends_at, 1501000)
+
+  const paused = pauseTimer(running, 301000)
+  assert.equal(paused.status, 'paused')
+  assert.equal(paused.remaining_seconds, 1200)
+  const extended = extendTimer(paused, 5, 301000)
+  assert.equal(extended.blocks[0].duration_minutes, 30)
+  assert.equal(extended.remaining_seconds, 1500)
+
+  const ready = completeTimerBlock(startTimer(extended, 301000), 1801000)
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready.currentIndex, 0)
+  assert.equal(ready.blocks[0].completed, true)
+  const next = startNextTimerBlock(ready, 1801000)
+  assert.equal(next.status, 'running')
+  assert.equal(next.currentIndex, 1)
+
+  const skipped = skipTimerBlock(next, 1801000)
+  assert.equal(skipped.status, 'ready')
+  assert.equal(skipped.blocks[1].skipped, true)
+  assert.equal(skipped.currentIndex, 1)
+})
+
+test('timer persistence normalization clamps values and recovers an expired running block', () => {
+  const sequence = createTimerSequence(timerBlocks(), 1000)
+  const persisted = normalizeTimerSequence({
+    ...sequence,
+    status: 'running',
+    started_at: 1000,
+    ends_at: 2000,
+    remaining_seconds: 999999,
+  }, 3000)
+  assert.equal(persisted.remaining_seconds, 1500)
+
+  const recovered = recoverTimerSequence({
+    ...sequence,
+    status: 'running',
+    started_at: 1000,
+    ends_at: 2000,
+  }, 3000)
+  assert.equal(recovered.status, 'ready')
+  assert.equal(recovered.blocks[0].completed, true)
+
+  const reset = resetTimerSequence(recovered, 4000)
+  assert.equal(reset.status, 'idle')
+  assert.equal(reset.currentIndex, 0)
+  assert.equal(reset.remaining_seconds, 1500)
 })

@@ -3,6 +3,9 @@ import InlineEdit from './components/InlineEdit'
 import {
   CATEGORY_KEYS,
   buildPlanningRequest,
+  completeTimerBlock,
+  createTimerSequence,
+  extendTimer,
   isValidDateValue,
   isValidTimeValue,
   loadIrisState,
@@ -10,8 +13,14 @@ import {
   moveInterpretationItem,
   normalizeInterpretation,
   normalizePlan,
+  pauseTimer,
   persistIrisState,
   removeInterpretationItem,
+  resetTimerSequence,
+  skipTimerBlock,
+  startNextTimerBlock,
+  startTimer,
+  resumeTimer,
   updateInterpretationItem as updateInterpretationItemState,
 } from './lib/irisState'
 import './App.css'
@@ -54,6 +63,9 @@ function App() {
   const [interpretation, setInterpretation] = useState(restored.interpretation)
   const [plan, setPlan] = useState(restored.plan)
   const [completedTaskIds, setCompletedTaskIds] = useState(restored.completedTaskIds)
+  const [timerSequence, setTimerSequence] = useState(restored.timerSequence)
+  const [timerDefaultMinutes, setTimerDefaultMinutes] = useState(25)
+  const [clockNow, setClockNow] = useState(Date.now)
   const [loading, setLoading] = useState(false)
   const [planning, setPlanning] = useState(false)
   const [error, setError] = useState(null)
@@ -66,8 +78,20 @@ function App() {
   const [lastReviewMove, setLastReviewMove] = useState(null)
 
   useEffect(() => {
-    persistIrisState({ brainDump, interpretation, plan, completedTaskIds })
-  }, [brainDump, interpretation, plan, completedTaskIds])
+    persistIrisState({ brainDump, interpretation, plan, completedTaskIds, timerSequence })
+  }, [brainDump, interpretation, plan, completedTaskIds, timerSequence])
+
+  useEffect(() => {
+    if (timerSequence?.status !== 'running') return undefined
+    const interval = window.setInterval(() => {
+      const now = Date.now()
+      setClockNow(now)
+      if (timerSequence.ends_at && timerSequence.ends_at <= now) {
+        setTimerSequence((current) => completeTimerBlock(current, now))
+      }
+    }, 1000)
+    return () => window.clearInterval(interval)
+  }, [timerSequence?.status, timerSequence?.ends_at])
 
   useEffect(() => {
     if (!lastReviewMove) return undefined
@@ -110,6 +134,26 @@ function App() {
 
   function toggleTask(id) {
     setCompletedTaskIds((current) => current.includes(id) ? current.filter((taskId) => taskId !== id) : [...current, id])
+  }
+
+  function launchTimer(task) {
+    const duration = Number.isInteger(task.estimated_minutes) && task.estimated_minutes > 0
+      ? Math.min(task.estimated_minutes, 180)
+      : timerDefaultMinutes
+    setTimerSequence(createTimerSequence([
+      { id: `work-${task.id}`, label: getText(task), type: 'work', duration_minutes: duration, source_task_id: task.id },
+      { id: `break-${task.id}`, label: 'take a gentle break', type: 'break', duration_minutes: 5 },
+    ]))
+  }
+
+  function stopTimer() {
+    setTimerSequence((current) => current ? { ...current, status: 'stopped', started_at: null, ends_at: null } : null)
+  }
+
+  function timerRemainingSeconds() {
+    if (!timerSequence) return 0
+    if (timerSequence.status !== 'running') return timerSequence.remaining_seconds
+    return Math.max(0, Math.ceil((timerSequence.ends_at - clockNow) / 1000))
   }
 
   function updateInterpretationItem(category, itemId, patch) {
@@ -254,6 +298,33 @@ function App() {
     </div>
   }
 
+  function renderTimerPanel() {
+    if (!timerSequence) return null
+    const block = timerSequence.blocks[timerSequence.currentIndex]
+    const remaining = timerRemainingSeconds()
+    const minutes = Math.floor(remaining / 60)
+    const seconds = remaining % 60
+    const completedBlocks = timerSequence.blocks.filter((entry) => entry.completed || entry.skipped).length
+    const isReady = timerSequence.status === 'ready'
+    const isComplete = timerSequence.status === 'completed'
+    return <section className="timer-panel" aria-live="polite">
+      <div className="timer-heading"><div><p className="plan-label">focus sequence</p><h2>{block?.label}</h2><p className="timer-context">block {timerSequence.currentIndex + 1} of {timerSequence.blocks.length} · {block?.type}</p></div><strong className="timer-clock">{String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</strong></div>
+      <div className="timer-progress" aria-label={`${completedBlocks} of ${timerSequence.blocks.length} blocks complete`}><span style={{ width: `${(completedBlocks / timerSequence.blocks.length) * 100}%` }} /></div>
+      {isReady && <p className="timer-ready" role="status">ready for the next block?</p>}
+      {isComplete && <p className="timer-ready" role="status">sequence complete. nice work.</p>}
+      <div className="timer-actions">
+        {timerSequence.status === 'idle' && <button onClick={() => setTimerSequence((current) => startTimer(current))}>start</button>}
+        {timerSequence.status === 'running' && <button onClick={() => setTimerSequence((current) => pauseTimer(current))}>pause</button>}
+        {timerSequence.status === 'paused' && <button onClick={() => setTimerSequence((current) => resumeTimer(current))}>resume</button>}
+        {isReady && <button onClick={() => setTimerSequence((current) => startNextTimerBlock(current))}>start next</button>}
+        {!isComplete && <button className="small-button" onClick={() => setTimerSequence((current) => extendTimer(current))}>extend 5 min</button>}
+        {!isComplete && !isReady && <button className="small-button" onClick={() => setTimerSequence((current) => skipTimerBlock(current))}>skip</button>}
+        {!isComplete && <button className="small-button" onClick={stopTimer}>stop sequence</button>}
+        {(isComplete || timerSequence.status === 'stopped') && <button className="small-button" onClick={() => setTimerSequence((current) => resetTimerSequence(current))}>reset</button>}
+      </div>
+    </section>
+  }
+
   function renderPreviewCategory(category) {
     const items = interpretation?.[category] || []
     const [icon, label] = CATEGORIES[category]
@@ -290,6 +361,7 @@ function App() {
     return <div className={`${isSubtask ? 'planned-subtask' : 'planned-task movable-item'} ${complete ? 'completed' : ''}`} key={task.id} draggable={!isSubtask} onDragStart={!isSubtask ? () => setDragSource({ kind: 'plan', taskId: task.id, taskIndex: index, dayId, title: getText(task) }) : undefined} onDragOver={!isSubtask ? (event) => event.preventDefault() : undefined} onDrop={!isSubtask ? (event) => { event.preventDefault(); requestPlanMove(dayId, index) } : undefined} onDragEnd={!isSubtask ? () => setDragSource(null) : undefined}>
       {!isSubtask && <button className="task-check-button" onClick={() => toggleTask(task.id)} aria-label={`${complete ? 'Mark incomplete' : 'Mark complete'}: ${getText(task)}`}>{complete ? '✓' : '○'}</button>}
       <div className="item-information"><InlineEdit value={getText(task)} onSave={(description) => update({ description })} className="item-title-edit" ariaLabel="Edit task" />{task.source && <span>{task.source}</span>}{!isSubtask && renderPlanningMetadata(task)}{renderDateTime(task, update)}{!isSubtask && (task.subtasks || []).map((subtask, subtaskIndex) => renderTask(subtask, subtaskIndex, dayId, task.id))}</div>
+      {!isSubtask && <button className="task-timer-button" onClick={() => launchTimer(task)} aria-label={`Start a timer for ${getText(task)}`}>timer</button>}
     </div>
   }
 
@@ -336,7 +408,8 @@ function App() {
   const greeting = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
   return <main className="app dashboard-app"><div className="dashboard">
     <header className="dashboard-header"><div><p className="eyebrow">iris</p><h1>good {greeting}.</h1><p className="subtitle">let’s make today manageable.</p></div><button className="small-button" onClick={resetIris}>+ brain dump</button></header>
-    <section className="focus-card"><div><p className="plan-label">today · {formatPlanDate(localNow.currentDate)}</p><InlineEdit value={today?.focus || ''} placeholder="a manageable next step" onSave={(focus) => updatePlanDay(today.id, { focus })} className="focus-edit" ariaLabel="Edit today’s focus" /></div><div className="progress-ring">{progress}%</div></section>
+    <section className="focus-card"><div><p className="plan-label">today · {formatPlanDate(localNow.currentDate)}</p><InlineEdit value={today?.focus || ''} placeholder="a manageable next step" onSave={(focus) => updatePlanDay(today.id, { focus })} className="focus-edit" ariaLabel="Edit today’s focus" /></div><div className="focus-tools"><label className="timer-default-control">timer default<select value={timerDefaultMinutes} onChange={(event) => setTimerDefaultMinutes(Number(event.target.value))} aria-label="Default timer duration"><option value="15">15 min</option><option value="25">25 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label><div className="progress-ring">{progress}%</div></div></section>
+    {renderTimerPanel()}
      <section className="dashboard-section today-plan" onDragOver={(event) => event.preventDefault()} onDrop={() => requestPlanMove(today.id, today.tasks.length)}><p className="today-date">today</p><InlineEdit type="date" value={today.date} displayValue={formatPlanDate(today.date)} onSave={(date) => updatePlanDay(today.id, { date })} validate={(date) => isValidDateValue(date) ? '' : 'Use a real date.'} className="today-full-date" ariaLabel="Edit today’s plan date" /><p className="plan-label">today’s plan</p>{renderTasks(today.tasks, today.id)}</section>
     {today.protected_time.length > 0 && <section className="dashboard-section protected-section"><p className="plan-label">protected</p>{today.protected_time.map((item) => <p className="protected-item" key={item.id}>♡ <InlineEdit value={getText(item)} onSave={(description) => updateProtectedTime(today.id, item.id, { description })} className="protected-edit" ariaLabel="Edit protected time" /></p>)}</section>}
      {upcomingAnchors.length > 0 && <section className="dashboard-section upcoming-section"><p className="plan-label">upcoming</p>{upcomingAnchors.map((anchor) => <div className="anchor-item" key={anchor.id}><InlineEdit value={getText(anchor)} onSave={(title) => updatePlanAnchor(anchor.dayId, anchor.id, { title })} className="anchor-edit" ariaLabel="Edit anchor" /><div className="editable-metadata"><InlineEdit type="date" value={anchor.date} displayValue={formatPlanDate(anchor.date)} onSave={(date) => updatePlanAnchor(anchor.dayId, anchor.id, { date })} validate={(date) => isValidDateValue(date) ? '' : 'Use a real date.'} className="metadata-edit" ariaLabel="Edit anchor date" /><InlineEdit type="time" value={anchor.time || ''} placeholder="add time" onSave={(time) => updatePlanAnchor(anchor.dayId, anchor.id, { time })} validate={(time) => isValidTimeValue(time) ? '' : 'Use a time like 09:30.'} className="metadata-edit" ariaLabel="Edit anchor time" /></div></div>)}</section>}
