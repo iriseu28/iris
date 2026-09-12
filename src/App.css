@@ -442,6 +442,24 @@ button:hover {
   text-decoration: line-through;
 }
 
+.planning-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: rgba(41, 35, 56, 0.58);
+  font-size: 0.76rem;
+}
+
+.task-priority {
+  color: #5a4e6d;
+  font-weight: 700;
+}
+
+.priority-urgent {
+  color: #a34f58;
+}
+
 .protected-section {
   background: rgba(229, 215, 248, 0.42);
 }

@@ -12,6 +12,8 @@ export const INTERPRETATION_CATEGORIES = [
   'questions',
 ]
 
+export const PLANNING_PRIORITIES = ['urgent', 'important', 'normal']
+
 export const MAX_BRAIN_DUMP_LENGTH = 20000
 
 const MAX_ITEMS_PER_CATEGORY = 100
@@ -21,6 +23,7 @@ const MAX_SUBTASK_DEPTH = 3
 const MAX_TEXT_LENGTH = 2000
 const MAX_REASON_LENGTH = 1000
 const MAX_SHORT_TEXT_LENGTH = 200
+const MAX_ESTIMATED_MINUTES = 1440
 const TEXT_FIELDS = ['description', 'task', 'item', 'action', 'title', 'name']
 
 function fail(message, statusCode, publicMessage) {
@@ -75,11 +78,36 @@ function validateOptionalTime(source, key, path, target, statusCode, publicMessa
   target[key] = source[key]
 }
 
+function validateOptionalNullableString(source, key, path, target, maxLength, statusCode, publicMessage, validator = () => true) {
+  if (!(key in source)) return
+  if (source[key] === null) {
+    target[key] = null
+    return
+  }
+  if (typeof source[key] !== 'string' || source[key].length > maxLength || !validator(source[key])) {
+    fail(`${path}.${key} is invalid`, statusCode, publicMessage)
+  }
+  target[key] = source[key]
+}
+
+function validateOptionalNullableNumber(source, key, path, target, max, statusCode, publicMessage) {
+  if (!(key in source)) return
+  if (source[key] === null) {
+    target[key] = null
+    return
+  }
+  if (!Number.isInteger(source[key]) || source[key] < 0 || source[key] > max) {
+    fail(`${path}.${key} must be an integer between 0 and ${max}`, statusCode, publicMessage)
+  }
+  target[key] = source[key]
+}
+
 function sanitizeItem(item, path, {
   statusCode,
   publicMessage,
   requireText = true,
   allowSubtasks = false,
+  allowPlanningMetadata = false,
   depth = 0,
 } = {}) {
   assertPlainObject(item, path, statusCode, publicMessage)
@@ -105,6 +133,13 @@ function sanitizeItem(item, path, {
   validateOptionalString(item, 'source', path, target, MAX_REASON_LENGTH, statusCode, publicMessage)
   validateOptionalString(item, 'reason', path, target, MAX_REASON_LENGTH, statusCode, publicMessage)
 
+  if (allowPlanningMetadata) {
+    validateOptionalNullableString(item, 'priority', path, target, MAX_SHORT_TEXT_LENGTH, statusCode, publicMessage, (value) => PLANNING_PRIORITIES.includes(value))
+    validateOptionalNullableNumber(item, 'estimated_minutes', path, target, MAX_ESTIMATED_MINUTES, statusCode, publicMessage)
+    validateOptionalNullableString(item, 'source_id', path, target, MAX_SHORT_TEXT_LENGTH, statusCode, publicMessage, (value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value))
+    validateOptionalNullableString(item, 'source_category', path, target, MAX_SHORT_TEXT_LENGTH, statusCode, publicMessage, (value) => INTERPRETATION_CATEGORIES.includes(value))
+  }
+
   if ('uncertain' in item) {
     if (typeof item.uncertain !== 'boolean' && typeof item.uncertain !== 'string') {
       fail(`${path}.uncertain must be a boolean or string`, statusCode, publicMessage)
@@ -126,6 +161,7 @@ function sanitizeItem(item, path, {
       statusCode,
       publicMessage,
       allowSubtasks: true,
+      allowPlanningMetadata,
       depth: depth + 1,
     }))
   }
@@ -236,6 +272,7 @@ export function validatePlan(candidate, { allowMissingAnchorDate = false, status
       statusCode,
       publicMessage,
       allowSubtasks: true,
+      allowPlanningMetadata: true,
     }))
 
     result.anchors = (day.anchors || []).map((anchor, index) => {

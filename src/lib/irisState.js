@@ -12,6 +12,8 @@ export const CATEGORY_KEYS = [
 ]
 
 export const INTERPRETATION_KEYS = [...CATEGORY_KEYS, 'questions']
+export const PLANNING_PRIORITIES = ['urgent', 'important', 'normal']
+const MAX_ESTIMATED_MINUTES = 1440
 
 export function createId(prefix = 'iris') {
   if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`
@@ -127,10 +129,25 @@ export function normalizePlan(candidate) {
         ...day,
         id: day.id || createId('day'),
         focus: typeof day.focus === 'string' ? day.focus : '',
-        tasks: (day.tasks || []).map((task) => ({
-          ...normalizeEntity(task, 'task'),
-          date: task?.date || day.date,
-        })),
+        tasks: (day.tasks || []).map((task) => {
+          const normalized = normalizeEntity(task, 'task')
+          const sourceId = typeof normalized.source_id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(normalized.source_id)
+            ? normalized.source_id
+            : null
+          const sourceCategory = INTERPRETATION_KEYS.includes(normalized.source_category)
+            ? normalized.source_category
+            : null
+          return {
+            ...normalized,
+            priority: PLANNING_PRIORITIES.includes(normalized.priority) ? normalized.priority : null,
+            estimated_minutes: Number.isInteger(normalized.estimated_minutes) && normalized.estimated_minutes >= 0 && normalized.estimated_minutes <= MAX_ESTIMATED_MINUTES
+              ? normalized.estimated_minutes
+              : null,
+            source_id: sourceId,
+            source_category: sourceId ? sourceCategory : null,
+            date: task?.date || day.date,
+          }
+        }),
         anchors: (day.anchors || []).map((anchor) => normalizeEntity(anchor, 'anchor')),
         protected_time: (day.protected_time || []).map((item) => normalizeEntity(item, 'protected')),
       }

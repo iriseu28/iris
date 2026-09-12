@@ -16,9 +16,11 @@ import {
   mergeReviewedInterpretation,
   moveInterpretationItem,
   normalizeInterpretation,
+  normalizePlan,
   removeInterpretationItem,
   updateInterpretationItem,
 } from '../src/lib/irisState.js'
+import { enforceTaskLineage } from '../server/domain/lineage.js'
 
 function validItem(text = 'Review the material') {
   return { description: text }
@@ -226,4 +228,97 @@ test('clarification refresh preserves reviewed items while accepting new interpr
     { id: 'new-task', description: 'New clarification task', subtasks: undefined },
   ])
   assert.equal(merged.questions[0].description, 'One more detail?')
+})
+
+test('plan metadata is optional and preserved when valid', () => {
+  const plan = validPlan()
+  plan.days[0].tasks[0] = {
+    ...plan.days[0].tasks[0],
+    priority: 'urgent',
+    estimated_minutes: 30,
+    source_id: 'task-source-1',
+    source_category: 'tasks',
+  }
+
+  const result = validatePlan(plan)
+  assert.equal(result.days[0].tasks[0].priority, 'urgent')
+  assert.equal(result.days[0].tasks[0].estimated_minutes, 30)
+  assert.equal(result.days[0].tasks[0].source_id, 'task-source-1')
+  assert.equal(result.days[0].tasks[0].source_category, 'tasks')
+})
+
+test('plan metadata rejects unsupported priorities and unsafe effort estimates', () => {
+  for (const field of [
+    { priority: 'critical' },
+    { estimated_minutes: -1 },
+    { estimated_minutes: 1441 },
+    { estimated_minutes: 30.5 },
+    { source_id: 'not a safe id' },
+    { source_category: 'someday' },
+  ]) {
+    const plan = validPlan()
+    plan.days[0].tasks[0] = { ...plan.days[0].tasks[0], ...field }
+    assertSafeFailure(() => validatePlan(plan), 502)
+  }
+})
+
+test('client plan normalization preserves valid metadata and clears invalid optional values', () => {
+  const normalized = normalizePlan({
+    days: [{
+      date: '2026-09-07',
+      tasks: [{
+        description: 'Review material',
+        priority: 'important',
+        estimated_minutes: 45,
+        source_id: 'task-source-1',
+        source_category: 'tasks',
+      }, {
+        description: 'Uncertain metadata',
+        priority: 'critical',
+        estimated_minutes: 9999,
+        source_id: 'bad id',
+        source_category: 'someday',
+      }],
+    }],
+  })
+
+  assert.deepEqual(normalized.days[0].tasks[0], {
+    id: normalized.days[0].tasks[0].id,
+    description: 'Review material',
+    subtasks: undefined,
+    priority: 'important',
+    estimated_minutes: 45,
+    source_id: 'task-source-1',
+    source_category: 'tasks',
+    date: '2026-09-07',
+  })
+  assert.equal(normalized.days[0].tasks[1].priority, null)
+  assert.equal(normalized.days[0].tasks[1].estimated_minutes, null)
+  assert.equal(normalized.days[0].tasks[1].source_id, null)
+  assert.equal(normalized.days[0].tasks[1].source_category, null)
+})
+
+test('lineage clears deleted or mismatched sources without reconnecting tasks', () => {
+  const plan = {
+    days: [{
+      date: '2026-09-07',
+      tasks: [
+        { description: 'Keep link', source_id: 'task-1', source_category: 'tasks' },
+        { description: 'Deleted source', source_id: 'task-deleted', source_category: 'tasks' },
+        { description: 'Mismatched source', source_id: 'deadline-1', source_category: 'tasks' },
+      ],
+    }],
+  }
+  const interpretation = {
+    tasks: [{ id: 'task-1', description: 'Original task' }],
+    deadlines: [{ id: 'deadline-1', description: 'Deadline' }],
+  }
+  const result = enforceTaskLineage(plan, interpretation)
+
+  assert.equal(result.days[0].tasks[0].source_id, 'task-1')
+  assert.equal(result.days[0].tasks[0].source_category, 'tasks')
+  assert.equal(result.days[0].tasks[1].source_id, null)
+  assert.equal(result.days[0].tasks[1].source_category, null)
+  assert.equal(result.days[0].tasks[2].source_id, null)
+  assert.equal(result.days[0].tasks[2].source_category, null)
 })

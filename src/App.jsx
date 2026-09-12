@@ -289,13 +289,21 @@ function App() {
     const update = (patch) => isSubtask ? updateSubtask(parentTaskId, task.id, patch) : updatePlanTask(task.id, patch)
     return <div className={`${isSubtask ? 'planned-subtask' : 'planned-task movable-item'} ${complete ? 'completed' : ''}`} key={task.id} draggable={!isSubtask} onDragStart={!isSubtask ? () => setDragSource({ kind: 'plan', taskId: task.id, taskIndex: index, dayId, title: getText(task) }) : undefined} onDragOver={!isSubtask ? (event) => event.preventDefault() : undefined} onDrop={!isSubtask ? (event) => { event.preventDefault(); requestPlanMove(dayId, index) } : undefined} onDragEnd={!isSubtask ? () => setDragSource(null) : undefined}>
       {!isSubtask && <button className="task-check-button" onClick={() => toggleTask(task.id)} aria-label={`${complete ? 'Mark incomplete' : 'Mark complete'}: ${getText(task)}`}>{complete ? '✓' : '○'}</button>}
-      <div className="item-information"><InlineEdit value={getText(task)} onSave={(description) => update({ description })} className="item-title-edit" ariaLabel="Edit task" />{task.source && <span>{task.source}</span>}{renderDateTime(task, update)}{!isSubtask && (task.subtasks || []).map((subtask, subtaskIndex) => renderTask(subtask, subtaskIndex, dayId, task.id))}</div>
+      <div className="item-information"><InlineEdit value={getText(task)} onSave={(description) => update({ description })} className="item-title-edit" ariaLabel="Edit task" />{task.source && <span>{task.source}</span>}{!isSubtask && renderPlanningMetadata(task)}{renderDateTime(task, update)}{!isSubtask && (task.subtasks || []).map((subtask, subtaskIndex) => renderTask(subtask, subtaskIndex, dayId, task.id))}</div>
     </div>
   }
 
   function renderTasks(tasks, dayId) {
     if (!tasks.length) return <p className="empty-plan">Nothing is scheduled here yet.</p>
     return tasks.map((task, index) => renderTask(task, index, dayId))
+  }
+
+  function renderPlanningMetadata(task) {
+    return <div className="planning-metadata" aria-label="Planning details">
+      {task.priority && <span className={`task-priority priority-${task.priority}`}>{task.priority}</span>}
+      {Number.isInteger(task.estimated_minutes) && <span>~{task.estimated_minutes} min</span>}
+      {task.source_category && <span>from {task.source_category}</span>}
+    </div>
   }
 
   function renderMoveDialog() {

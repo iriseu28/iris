@@ -6,6 +6,7 @@ import express from 'express'
 import cors from 'cors'
 import { createAiProvider } from './services/aiProvider.js'
 import { parseAiJson } from './domain/parseAiJson.js'
+import { enforceTaskLineage } from './domain/lineage.js'
 import {
   validateInterpretRequest,
   validateInterpretation,
@@ -318,7 +319,10 @@ CORE PRINCIPLES:
 22. Do not claim that something is completed.
 23. Never use vague tasks such as "study physics", "prepare for the test", or "work on it" when a test is involved. Each task must name a concrete action (review material, mark unclear areas, practice representative problems, correct mistakes, or recall key points).
 24. Dates in the corrected interpretation are normalized source-of-truth dates. Use them exactly; do not replace them with a relative phrase.
-25. Return ONLY valid JSON.
+25. For planned tasks, include priority only when supported by the corrected interpretation. Use exactly "urgent", "important", or "normal", or return null when unsupported.
+26. Include estimated_minutes only when a reasonable approximate effort is supported. Use a non-negative whole number of minutes, never false precision, or return null when unsupported.
+27. Preserve source_id only when it exactly matches an existing normalized interpretation item id from the corrected interpretation. Never invent source ids. Include source_category when source_id is present.
+28. Return ONLY valid JSON.
 
 IMPORTANT EXAMPLE:
 
@@ -359,7 +363,11 @@ OUTPUT FORMAT:
         {
           "description": "specific actionable step",
           "source": "what original task/deadline this supports",
-          "reason": "brief explanation of why this belongs today"
+          "reason": "brief explanation of why this belongs today",
+          "priority": null,
+          "estimated_minutes": null,
+          "source_id": null,
+          "source_category": null
         }
       ],
       "anchors": [
@@ -402,9 +410,12 @@ Build the plan from this information.
 
     const validated = validatePlan(parseAiJson(content), { allowMissingAnchorDate: true })
     const plan = validatePlan(
-      ensureGenericTestPreparation(
-        attachAnchorDates(validated, interpretation, currentDate),
-        interpretation
+      enforceTaskLineage(
+        ensureGenericTestPreparation(
+          attachAnchorDates(validated, interpretation, currentDate),
+          interpretation
+        ),
+        interpretation,
       ),
     )
 
