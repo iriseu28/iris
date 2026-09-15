@@ -14,6 +14,7 @@ import {
   completeTimerBlock,
   createTimerSequence,
   extendTimer,
+  getNextUsefulTask,
   isValidDateValue,
   isValidTimeValue,
   mergeReviewedInterpretation,
@@ -195,6 +196,36 @@ test('deleted interpretation items stay absent from planning payloads', () => {
   const payload = buildPlanningRequest(deleted, { currentDate: '2026-09-09', currentTime: '10:30' })
 
   assert.deepEqual(payload.interpretation.tasks, [])
+})
+
+test('next useful task prefers the first incomplete task for today', () => {
+  const todayTask = { id: 'today-task', description: 'Review today', priority: 'important', source_category: 'tasks' }
+  const plan = {
+    days: [
+      { date: '2026-09-12', tasks: [{ id: 'earlier-day-task', description: 'Do this later' }] },
+      { date: '2026-09-13', tasks: [{ id: 'completed-today', description: 'Already done' }, todayTask] },
+    ],
+  }
+
+  assert.strictEqual(getNextUsefulTask(plan, ['completed-today'], '2026-09-13'), todayTask)
+})
+
+test('next useful task skips completed tasks and falls back to the first incomplete planned task', () => {
+  const fallbackTask = { id: 'fallback-task', description: 'Start tomorrow', estimated_minutes: 25 }
+  const plan = {
+    days: [
+      { date: '2026-09-13', tasks: [{ id: 'completed-today', description: 'Already done' }] },
+      { date: '2026-09-14', tasks: [{ id: 'completed-future', description: 'Also done' }, fallbackTask] },
+    ],
+  }
+
+  assert.strictEqual(getNextUsefulTask(plan, ['completed-today', 'completed-future'], '2026-09-13'), fallbackTask)
+})
+
+test('next useful task returns null when all planned tasks are complete', () => {
+  const plan = { days: [{ date: '2026-09-13', tasks: [{ id: 'done', description: 'Finished' }] }] }
+
+  assert.equal(getNextUsefulTask(plan, ['done'], '2026-09-13'), null)
 })
 
 test('client date and time edits accept valid values and reject invalid values', () => {

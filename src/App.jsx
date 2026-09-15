@@ -6,6 +6,7 @@ import {
   completeTimerBlock,
   createTimerSequence,
   extendTimer,
+  getNextUsefulTask,
   isValidDateValue,
   isValidTimeValue,
   loadIrisState,
@@ -65,6 +66,7 @@ function App() {
   const [completedTaskIds, setCompletedTaskIds] = useState(restored.completedTaskIds)
   const [timerSequence, setTimerSequence] = useState(restored.timerSequence)
   const [timerDefaultMinutes, setTimerDefaultMinutes] = useState(25)
+  const [activeView, setActiveView] = useState('home')
   const [clockNow, setClockNow] = useState(Date.now)
   const [loading, setLoading] = useState(false)
   const [planning, setPlanning] = useState(false)
@@ -113,6 +115,7 @@ function App() {
       return true
     })
   }, [plan, localNow.currentDate])
+  const nextUsefulTask = getNextUsefulTask(plan, completedTaskIds, localNow.currentDate)
 
   async function interpretBrainDump() {
     if (!brainDump.trim()) return
@@ -128,6 +131,7 @@ function App() {
     try {
       setPlan(normalizePlan(await postJson('/api/plan', buildPlanningRequest(interpretation, getLocalDateTime()))))
       setCompletedTaskIds([])
+      setActiveView('home')
     } catch (err) { console.error(err); setError(err.message || 'Iris could not create your plan. Please try again.') }
     finally { setPlanning(false) }
   }
@@ -267,7 +271,7 @@ function App() {
   }
 
   function resetIris() {
-    setBrainDump(''); setInterpretation(null); setPlan(null); setCompletedTaskIds([]); setError(null); setClarificationAnswers({}); setEditingQuestion(null); setLastReviewMove(null)
+    setBrainDump(''); setInterpretation(null); setPlan(null); setCompletedTaskIds([]); setError(null); setClarificationAnswers({}); setEditingQuestion(null); setLastReviewMove(null); setActiveView('home')
   }
 
   async function submitClarifications() {
@@ -378,6 +382,35 @@ function App() {
     </div>
   }
 
+  function renderHome() {
+    const todayTasks = (today?.tasks || []).filter((task) => !completedTaskIds.includes(task.id)).slice(0, 3)
+    const protectedItems = today?.protected_time || []
+    const firstAnchor = upcomingAnchors[0]
+    const questionCount = interpretation?.questions?.length || 0
+    const brainPreview = brainDump.trim().replace(/\s+/g, ' ')
+    const timerActive = timerSequence && !['completed', 'stopped'].includes(timerSequence.status)
+
+    return <main className="app dashboard-app home-app"><div className="home-shell">
+      <header className="home-header"><div><p className="eyebrow">iris home</p><h1>what matters now?</h1><p className="subtitle">a small view of where you are, and what can happen next.</p></div><button className="small-button" onClick={() => setActiveView('plan')}>open plan / review →</button></header>
+      <div className="home-grid">
+        <section className="home-tile home-hero"><p className="plan-label">what matters now</p>{nextUsefulTask
+          ? <><InlineEdit value={getText(nextUsefulTask)} onSave={(description) => updatePlanTask(nextUsefulTask.id, { description })} className="home-hero-title" ariaLabel="Edit what matters now" /><div className="home-hero-meta">{Number.isInteger(nextUsefulTask.estimated_minutes) && nextUsefulTask.estimated_minutes > 0 && <span>about {nextUsefulTask.estimated_minutes} min</span>}{nextUsefulTask.priority && <span>{nextUsefulTask.priority}</span>}</div><div className="next-useful-actions"><button onClick={() => launchTimer(nextUsefulTask)}>start</button><button className="small-button" onClick={() => toggleTask(nextUsefulTask.id)}>mark done</button></div></>
+          : <p className="home-empty">Nothing needs your attention right now.<br />You can leave Iris here, or add something through a brain dump.</p>}</section>
+
+        <button className="home-tile home-portal home-today" onClick={() => setActiveView('plan')}><span className="plan-label">today</span><strong>{todayTasks.length ? todayTasks[0] && getText(todayTasks[0]) : 'a quieter day'}</strong>{todayTasks.length > 1 && <span>{todayTasks.length - 1} more thing{todayTasks.length === 2 ? '' : 's'} in today’s plan</span>}<em>open detailed plan →</em></button>
+
+        <section className="home-tile home-portal home-protected"><span className="plan-label">protected</span>{protectedItems.length ? protectedItems.slice(0, 2).map((item) => <strong key={item.id}>♡ {getText(item)}</strong>) : <p>Nothing protected is set for today.</p>}</section>
+
+        <button className="home-tile home-portal home-ahead" onClick={() => setActiveView('plan')}><span className="plan-label">ahead</span>{firstAnchor ? <><strong>{getText(firstAnchor)}</strong><span>{formatPlanDate(firstAnchor.date)}</span></> : <p>No upcoming anchor is asking for attention.</p>}<em>see what’s ahead →</em></button>
+
+        <button className="home-tile home-portal home-brain" onClick={() => setActiveView('plan')}><span className="plan-label">brain</span><strong>{questionCount ? `${questionCount} thing${questionCount === 1 ? '' : 's'} need confirmation` : 'your latest thought'}</strong><span>{brainPreview ? `${brainPreview.slice(0, 92)}${brainPreview.length > 92 ? '…' : ''}` : 'open the detailed interpretation'}</span><em>open what Iris knows →</em></button>
+
+        <button className="home-tile home-portal home-focus" onClick={() => timerActive ? setActiveView('plan') : nextUsefulTask && launchTimer(nextUsefulTask)}><span className="plan-label">focus</span><strong>{timerActive ? 'focus is in progress' : nextUsefulTask ? 'begin a focus block' : 'nothing to focus on yet'}</strong><span>{timerActive ? 'return to the plan to see the timer' : 'use the next useful step when you are ready'}</span><em>{timerActive ? 'open focus →' : nextUsefulTask ? 'start focus →' : 'stay here →'}</em></button>
+      </div>
+      <p className="home-context">{formatPlanDate(localNow.currentDate)} · {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>
+    </div></main>
+  }
+
   function renderMoveDialog() {
     if (!pendingMove) return null
     const itemLabel = pendingMove.kind === 'review' ? 'item' : 'task'
@@ -404,10 +437,12 @@ function App() {
     {error && <p className="error">{error}</p>}<div className="confirmation-actions"><button onClick={() => { setInterpretation(null); setError(null); setClarificationAnswers({}); setEditingQuestion(null) }} disabled={planning}>← edit</button><button className="primary-action" onClick={createPlan} disabled={planning}>{planning ? 'making your plan...' : 'looks right →'}</button></div>{renderMoveDialog()}
   </div></main>
 
+  if (activeView === 'home') return renderHome()
+
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
   return <main className="app dashboard-app"><div className="dashboard">
-    <header className="dashboard-header"><div><p className="eyebrow">iris</p><h1>good {greeting}.</h1><p className="subtitle">let’s make today manageable.</p></div><button className="small-button" onClick={resetIris}>+ brain dump</button></header>
+    <header className="dashboard-header"><div><p className="eyebrow">plan / review</p><h1>good {greeting}.</h1><p className="subtitle">let’s make today manageable.</p></div><div className="dashboard-nav"><button className="small-button" onClick={() => setActiveView('home')}>← iris home</button><button className="small-button" onClick={resetIris}>+ brain dump</button></div></header>
     <section className="focus-card"><div><p className="plan-label">today · {formatPlanDate(localNow.currentDate)}</p><InlineEdit value={today?.focus || ''} placeholder="a manageable next step" onSave={(focus) => updatePlanDay(today.id, { focus })} className="focus-edit" ariaLabel="Edit today’s focus" /></div><div className="focus-tools"><label className="timer-default-control">timer default<select value={timerDefaultMinutes} onChange={(event) => setTimerDefaultMinutes(Number(event.target.value))} aria-label="Default timer duration"><option value="15">15 min</option><option value="25">25 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label><div className="progress-ring">{progress}%</div></div></section>
     {renderTimerPanel()}
      <section className="dashboard-section today-plan" onDragOver={(event) => event.preventDefault()} onDrop={() => requestPlanMove(today.id, today.tasks.length)}><p className="today-date">today</p><InlineEdit type="date" value={today.date} displayValue={formatPlanDate(today.date)} onSave={(date) => updatePlanDay(today.id, { date })} validate={(date) => isValidDateValue(date) ? '' : 'Use a real date.'} className="today-full-date" ariaLabel="Edit today’s plan date" /><p className="plan-label">today’s plan</p>{renderTasks(today.tasks, today.id)}</section>

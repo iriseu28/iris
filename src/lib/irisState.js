@@ -101,6 +101,14 @@ export function buildPlanningRequest(interpretation, { currentDate, currentTime 
   return { interpretation, currentDate, currentTime }
 }
 
+export function getNextUsefulTask(plan, completedTaskIds = [], currentDate) {
+  if (!plan || !Array.isArray(plan.days)) return null
+  const completed = new Set(Array.isArray(completedTaskIds) ? completedTaskIds : [])
+  const incomplete = (day) => (Array.isArray(day?.tasks) ? day.tasks : []).find((task) => task && !completed.has(task.id)) || null
+  const today = plan.days.find((day) => day?.date === currentDate)
+  return incomplete(today) || plan.days.reduce((selected, day) => selected || incomplete(day), null)
+}
+
 export function isValidDateValue(value) {
   if (value === '') return true
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
