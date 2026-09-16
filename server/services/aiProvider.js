@@ -1,3 +1,5 @@
+import { INTERPRETATION_RESPONSE_FORMAT } from './interpretationResponseFormat.js'
+
 const DEFAULT_GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile'
 
@@ -12,7 +14,7 @@ export function createAiProvider(environment = process.env) {
   const apiUrl = environment.GROQ_API_URL || DEFAULT_GROQ_URL
   const model = environment.GROQ_MODEL || DEFAULT_GROQ_MODEL
 
-  async function complete(messages) {
+  async function complete(messages, responseFormat) {
     if (!environment.GROQ_API_KEY) {
       throw providerError(
         'Iris’s AI service is not configured yet. Add GROQ_API_KEY and try again.',
@@ -32,6 +34,7 @@ export function createAiProvider(environment = process.env) {
           model,
           messages,
           temperature: 0.2,
+          ...(responseFormat ? { response_format: responseFormat } : {}),
         }),
       })
     } catch (error) {
@@ -76,7 +79,7 @@ export function createAiProvider(environment = process.env) {
   }
 
   return {
-    interpret: complete,
+    interpret: (messages) => complete(messages, INTERPRETATION_RESPONSE_FORMAT),
     plan: complete,
   }
 }

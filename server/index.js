@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import express from 'express'
 import cors from 'cors'
 import { createAiProvider } from './services/aiProvider.js'
+import { normalizeInterpretationStructuredOutput } from './services/interpretationResponseFormat.js'
 import { parseAiJson } from './domain/parseAiJson.js'
 import { enforceTaskLineage } from './domain/lineage.js'
 import {
@@ -252,7 +253,7 @@ Return exactly this structure:
       },
     ])
 
-    const validated = validateInterpretation(parseAiJson(content))
+    const validated = validateInterpretation(normalizeInterpretationStructuredOutput(parseAiJson(content)))
     const interpretation = normalizeInterpretationDates(validated, currentDate)
 
     res.json(interpretation)
