@@ -1,5 +1,3 @@
-const DATE_PATTERN = '^$|^\\d{4}-\\d{2}-\\d{2}$'
-const TIME_PATTERN = '^$|^([01]\\d|2[0-3]):[0-5]\\d$'
 const CATEGORIES = [
   'tasks',
   'deadlines',
@@ -12,60 +10,35 @@ const CATEGORIES = [
   'questions',
 ]
 
-function nullableString({ maxLength, pattern } = {}) {
-  const stringSchema = { type: 'string' }
-  if (maxLength !== undefined) stringSchema.maxLength = maxLength
-  if (pattern) stringSchema.pattern = pattern
-  return { anyOf: [stringSchema, { type: 'null' }] }
+function nullableString() {
+  return { anyOf: [{ type: 'string' }, { type: 'null' }] }
 }
 
-function nullableBooleanOrString(maxLength) {
-  return {
+const itemProperties = {
+  id: nullableString(),
+  description: nullableString(),
+  task: nullableString(),
+  item: nullableString(),
+  action: nullableString(),
+  title: nullableString(),
+  name: nullableString(),
+  date: nullableString(),
+  due_date: nullableString(),
+  due: nullableString(),
+  time: nullableString(),
+  displayRelative: nullableString(),
+  type: nullableString(),
+  source: nullableString(),
+  reason: nullableString(),
+  uncertain: {
+    anyOf: [{ type: 'boolean' }, { type: 'string' }, { type: 'null' }],
+  },
+  subtasks: {
     anyOf: [
-      { type: 'boolean' },
-      { type: 'string', maxLength },
+      { type: 'array', items: { $ref: '#/$defs/interpretation_item' } },
       { type: 'null' },
     ],
-  }
-}
-
-function itemSchema(depth) {
-  const properties = {
-    id: nullableString({ maxLength: 200 }),
-    description: nullableString({ maxLength: 2000 }),
-    task: nullableString({ maxLength: 2000 }),
-    item: nullableString({ maxLength: 2000 }),
-    action: nullableString({ maxLength: 2000 }),
-    title: nullableString({ maxLength: 2000 }),
-    name: nullableString({ maxLength: 2000 }),
-    date: nullableString({ pattern: DATE_PATTERN }),
-    due_date: nullableString({ pattern: DATE_PATTERN }),
-    due: nullableString({ maxLength: 200 }),
-    time: nullableString({ pattern: TIME_PATTERN }),
-    displayRelative: nullableString({ maxLength: 200 }),
-    type: nullableString({ maxLength: 200 }),
-    source: nullableString({ maxLength: 1000 }),
-    reason: nullableString({ maxLength: 1000 }),
-    uncertain: nullableBooleanOrString(200),
-    subtasks: depth > 0
-      ? { anyOf: [{ type: 'array', maxItems: 50, items: itemSchema(depth - 1) }, { type: 'null' }] }
-      : { anyOf: [{ type: 'array', maxItems: 0, items: {} }, { type: 'null' }] },
-  }
-  const required = Object.keys(properties)
-  const textRequirement = ['description', 'task', 'item', 'action', 'title', 'name'].map((key) => ({
-    type: 'object',
-    additionalProperties: false,
-    properties,
-    required: [key],
-  }))
-
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties,
-    required,
-    anyOf: textRequirement,
-  }
+  },
 }
 
 const interpretationSchema = {
@@ -73,9 +46,17 @@ const interpretationSchema = {
   additionalProperties: false,
   properties: Object.fromEntries(CATEGORIES.map((category) => [
     category,
-    { type: 'array', maxItems: 100, items: itemSchema(3) },
+    { type: 'array', items: { $ref: '#/$defs/interpretation_item' } },
   ])),
   required: CATEGORIES,
+  $defs: {
+    interpretation_item: {
+      type: 'object',
+      additionalProperties: false,
+      properties: itemProperties,
+      required: Object.keys(itemProperties),
+    },
+  },
 }
 
 export const INTERPRETATION_RESPONSE_FORMAT = {
@@ -99,4 +80,4 @@ export function normalizeInterpretationStructuredOutput(candidate) {
   ]))
 }
 
-export { interpretationSchema }
+export { CATEGORIES, interpretationSchema }

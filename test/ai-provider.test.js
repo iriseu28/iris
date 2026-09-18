@@ -56,6 +56,19 @@ test('interpretation schema closes objects and requires all current categories',
   assert.equal(schema.additionalProperties, false)
   assert.deepEqual(schema.required, ['tasks', 'deadlines', 'events', 'reminders', 'routines', 'notes', 'ideas', 'non_negotiables', 'questions'])
   const item = schema.properties.tasks.items
-  assert.equal(item.additionalProperties, false)
-  assert.deepEqual(item.required, Object.keys(item.properties))
+  assert.deepEqual(item, { $ref: '#/$defs/interpretation_item' })
+  assert.equal(schema.$defs.interpretation_item.additionalProperties, false)
+  assert.deepEqual(schema.$defs.interpretation_item.required, Object.keys(schema.$defs.interpretation_item.properties))
+})
+
+test('strict interpretation request stays below the conservative project size budget', () => {
+  const request = {
+    model: 'openai/gpt-oss-120b',
+    messages: [{ role: 'system', content: 'interpret' }, { role: 'user', content: 'test' }],
+    temperature: 0.2,
+    response_format: INTERPRETATION_RESPONSE_FORMAT,
+  }
+  const requestBytes = new TextEncoder().encode(JSON.stringify(request)).byteLength
+  const conservativeBudgetBytes = 256 * 1024
+  assert.ok(requestBytes < conservativeBudgetBytes, `request schema is ${requestBytes} bytes; expected under ${conservativeBudgetBytes}`)
 })
